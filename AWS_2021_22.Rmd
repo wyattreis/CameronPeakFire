@@ -1,0 +1,91 @@
+---
+title: "AWS_2021_22"
+author: "Wyatt Reis"
+date: '2022-05-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(plotly)
+library(ggplot2)
+```
+
+```{r}
+# Import data with simple header
+## Unburned forest hourly data before 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
+one_hour_uf_pre0110 <- read.table(
+  "N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Unburned/Data_220110/CR1000_7_One_Hour.dat",
+                                  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'uf') %>%
+  filter(TIMESTAMP >= "2021-11-19 07:00:00")
+
+## Unburned forest hourly data since 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
+one_hour_uf_post0110 <- read.table(
+  "N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Unburned/Data_220406/CR1000_7_One_Hour.dat",
+  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'uf') 
+
+## Unburned forest fifteen minute data since 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
+fifteen_min_uf_post0110 <- read.table(
+  "N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Unburned/Data_220406/CR1000_7_Fifteen_Minute.dat",
+  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'uf') 
+
+## combine unburned data into one df
+one_hour_uf <- bind_rows(one_hour_uf_pre0110, one_hour_uf_post0110)
+
+## Burned forest hourly data, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
+one_hour_bf <- read.table(
+  "N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Burned/Data_220406/CR1000XSeries - new_Hourly.dat",
+  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'bf')
+
+# Combine all imported hourly data into one df
+all_hr <- bind_rows(one_hour_uf, one_hour_bf) %>%
+  filter(TIMESTAMP >= "2021-11-19 07:00:00")
+```
+
+```{r}
+## compare incoming SW between sites, put in 1 df -- HOURLY
+all_rad <- all_hr %>%
+    select(c(TIMESTAMP, SWin_Avg, SWout_Avg, 
+           LWin_Avg, LWout_Avg,
+           SWalbedo_Avg, site)) %>%
+  filter(TIMESTAMP > ymd_hms("2021-11-01 00:00:00")) %>%
+  mutate(yday = yday(TIMESTAMP),
+         date = as_date(TIMESTAMP))
+
+## get into daily sums
+all_rad_daily <- all_rad %>%
+  select(-TIMESTAMP, SWalbedo_Avg) %>%
+  group_by(date, site) %>%
+  summarize_all(list(sum))
+```
+
+```{r fig.width=12,fig.height=11}
+
+swin_daily<- ggplot(all_rad_daily, aes(x = date, y= SWin_Avg, color = site)) +
+  geom_line() +
+  ggtitle("SWin daily sum")
+ggplotly(swin_daily)
+
+
+```
+
