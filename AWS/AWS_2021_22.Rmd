@@ -1,7 +1,7 @@
 ---
 title: "AWS2021_22_web"
 author: "Wyatt Reis"
-date: '2022-05-22'
+date: "`r Sys.Date()`"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -105,14 +105,14 @@ swin_daily_cum<- ggplot(all_rad_daily) +
 ggplotly(swin_daily_cum)
 
 swin_daily_ratio_filtered <- ggplot(rad_day_filtered) +
-  geom_line(aes(x = date, y= SWin_ratio, color = site)) #+
-  ggtitle("SWin daily ratio (UF/BF)") 
-
+  geom_line(aes(x = date, y= SWin_ratio, color = site)) +
+  ggtitle("SWin daily ratio (UF/BF)") +
+  scale_color_manual(values = c("black", "green"))
 ggplotly(swin_daily_ratio_filtered)
 
 swin_ratio_boxplot<- ggplot(rad_day_filtered, aes(x = site, y= SWin_ratio, color = site)) +
   geom_boxplot() +
-  ggtitle("SWin_ratio daily boxplot - filtered") +
+  ggtitle("SWin_ratio (UF/BF) daily boxplot - filtered") +
   scale_color_manual(values = c("green"))
 ggplotly(swin_ratio_boxplot)
 
@@ -146,7 +146,7 @@ ggplotly(albedo_daily_boxplot)
 
 albedo_ratio_boxplot<- ggplot(all_rad_daily, aes(x = site, y= SWalbedo_ratio, color = site)) +
   geom_boxplot() +
-  ggtitle("Albedo ratio boxplot")+
+  ggtitle("Albedo ratio (UF/BF) boxplot")+
   scale_color_manual(values = c("black", "green"))
 ggplotly(albedo_ratio_boxplot)
 ```
