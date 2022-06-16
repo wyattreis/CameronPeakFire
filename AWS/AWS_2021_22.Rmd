@@ -31,7 +31,7 @@ one_hour_uf_pre0110 <- read.table('C:/Users/wreis/OneDrive - Colostate/MS Resear
 
 ## Unburned forest hourly data since 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
 one_hour_uf_post0110 <- read.table(
-  'C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000_7_One_Hour_0515.dat',
+  'C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000_7_One_Hour_0613.dat',
   sep = ",", header = TRUE, skip = "1") %>%
   slice(., -(1:2)) %>%
   mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
@@ -45,7 +45,7 @@ one_hour_uf <- bind_rows(one_hour_uf_pre0110, one_hour_uf_post0110)
 
 ## Burned forest hourly data, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
 one_hour_bf <- read.table(
-  "C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000XSeries - new_Hourly_0515.dat",
+  "C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000XSeries - new_Hourly_0613.dat",
   sep = ",", header = TRUE, skip = "1") %>%
   slice(., -(1:2)) %>%
   mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
@@ -61,13 +61,15 @@ all_hr <- bind_rows(one_hour_uf, one_hour_bf) %>%
 
 ```{r echo=FALSE}
 ## compare incoming SW between sites, put in 1 df -- HOURLY
+sb = 5.67E-8
+
 all_rad <- all_hr %>%
     select(c(TIMESTAMP, site, SWin_Avg, SWout_Avg, SWnet_Avg,
            LWin_Avg, LWout_Avg, LWnet_Avg,
            SWalbedo_Avg, AirTC_Avg)) %>%
   filter(TIMESTAMP > ymd_hms("2021-11-01 00:00:00")) %>%
-  mutate(yday = yday(TIMESTAMP),
-         date = as_date(TIMESTAMP), hr = hour(TIMESTAMP))
+  mutate(lw_out_temp = sb*(AirTC_Avg+273.15)^4, diff = LWout_Avg - lw_out_temp, net_Avg = LWnet_Avg + SWnet_Avg) %>%
+  mutate(yday = yday(TIMESTAMP),date = as_date(TIMESTAMP), hr = hour(TIMESTAMP))
 
 ## get into daily sums
 all_rad_daily <- all_rad %>%
@@ -89,7 +91,6 @@ rad_day_filtered <- all_rad_daily %>%
 ```
 
 ```{r shortwave, fig.width=12,fig.height=7}
-
 # Shortwave
 sw_daily<- ggplot(all_rad_daily) +
   geom_line(aes(x = date, y= SWin_Avg_sum, color = site, linetype = "SWin")) +
@@ -130,13 +131,13 @@ albedo_daily<- ggplot(all_rad_daily, aes(x = date, y= SWalbedo_Avg_median, color
   geom_line() +
   ggtitle("Albedo daily median (between 1000 and 1400)")+
   scale_color_manual(values = c("black", "green"))
-ggplotly(albedo_daily)
+ggplotly(albedo_daily) %>% layout(hovermode = "x unified")
 
 albedo_daily_ratio<- ggplot(all_rad_daily, aes(x = date, y= SWalbedo_ratio, color = site)) +
   geom_line() +
   ggtitle("Albedo daily ratio (UF/BF)")+
   scale_color_manual(values = c("black", "green"))
-ggplotly(albedo_daily_ratio)
+ggplotly(albedo_daily_ratio) %>% layout(hovermode = "x unified")
 
 albedo_daily_boxplot<- ggplot(all_rad_daily, aes(x = site, y= SWalbedo_Avg_median, color = site)) +
   geom_boxplot() +
@@ -156,14 +157,35 @@ ggplotly(albedo_ratio_boxplot)
 sb = 5.67E-8
 
 all_rad <- all_rad %>%
-  mutate(lw_out_temp = sb*(AirTC_Avg+273.15)^4, diff = LWout_Avg - lw_out_temp)
+  mutate(lw_out_temp = sb*(AirTC_Avg+273.15)^4, diff = LWout_Avg - lw_out_temp, net_Avg = LWnet_Avg + SWnet_Avg)
 
 lw_hr <- ggplot(all_rad) +
   geom_line(aes(x = TIMESTAMP, y = LWout_Avg, color = site, linetype = "measured")) +
   geom_line(aes(x = TIMESTAMP, y = lw_out_temp, color = site, linetype = "approx."))
-ggplotly(lw_hr)
+ggplotly(lw_hr) %>% layout(hovermode = "x unified")
 
-net_hr <- ggplot(all_rad)
 
+
+net_hr <- ggplot(all_rad) +
+  geom_line(aes(x = TIMESTAMP, y = LWnet_Avg, color = site, linetype = "LW_net")) +
+  geom_line(aes(x = TIMESTAMP, y = SWnet_Avg, color = site, linetype = "SW_net")) +
+  geom_line(aes(x = TIMESTAMP, y = net_Avg, color = site, linetype = "net"))
+ggplotly(net_hr) %>% layout(hovermode = "x unified")
+
+net_daily <- ggplot(all_rad_daily) +
+  geom_line(aes(x = date, y = net_Avg_sum, color = site))
+ggplotly(net_daily) %>% layout(hovermode = "x unified")
+```
+
+```{r}
+# Permativity
+all_perm <- all_hr %>%
+  select(TIMESTAMP, site, starts_with("Ka")) %>%
+  pivot_longer(., cols = c(3:11), names_to = "depth", values_to = "Ka")
+
+perm <- ggplot(all_perm) + 
+  geom_line(aes(x = TIMESTAMP, y = Ka, color = site, linetype = depth))
+
+ggplotly(perm)
 ```
 
