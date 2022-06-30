@@ -1,0 +1,151 @@
+---
+title: "Camera_SD"
+author: "Wyatt Reis"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(zoo)
+library(snotelr)
+```
+
+```{r, eval=FALSE}
+# Import camera data
+BFN_cam <-read.csv('Camera_SD/data/BFN_cam_depth.csv') %>%
+  mutate(site = "BF_N")
+
+BFS_cam <-read.csv('Camera_SD/data/BFS_cam_depth.csv') %>%
+  mutate(site = "BF_S")
+
+BFWx_cam <- read.csv('Camera_SD/data/BFWx_cam_depth.csv') %>%
+  mutate(site = "BF_Wx", depth2 = NA, depth3 = NA)
+
+UFN_cam <- read.csv('Camera_SD/data/UFN_cam_depth.csv') %>%
+  mutate(site = "UF_N")
+
+UFWx_cam <- read.csv('Camera_SD/data/UFWx_cam_depth.csv') %>%
+  mutate(site = "UF_Wx", depth2 = NA, depth3 = NA)
+
+all_cam <- bind_rows(BFN_cam, BFS_cam, BFWx_cam, UFN_cam, UFWx_cam) %>% 
+  mutate(Datetime = mdy_hm(Datetime), depth_avg = rowMeans(.[,2:4], na.rm = TRUE), date = date(Datetime))
+
+save(all_cam, file = "all_cam")
+```
+
+```{r}
+# Load snow pit data
+load('C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/all_pits')
+
+# Snow Pit Density 
+pit_density <- all_pits %>%
+  mutate(density_avg = rowMeans(.[,5:7], na.rm = TRUE), weight = densityTop - densityBot) %>%
+  group_by(date, site) %>%
+  summarise(bulk_density = weighted.mean(density_avg, weight, na.rm = TRUE), pit_SD = max(heightAG, na.rm = TRUE))
+```
+
+```{r}
+# Continuous SWE from cameras
+# Load Camera Data
+load("C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/all_cam")
+
+daily_wide <- merge(all_cam, pit_density, all = TRUE) %>% 
+  select(-c(3:6)) %>% 
+  pivot_wider(names_from = site, values_from = c(depth_avg, bulk_density, pit_SD)) %>% 
+  arrange(date) %>% 
+  mutate(depth_avg_BF_N = coalesce(depth_avg_BF_N, pit_SD_BF_N), depth_avg_BF_S = coalesce(depth_avg_BF_S, pit_SD_BF_S),
+         depth_avg_BF_Wx = coalesce(depth_avg_BF_Wx, pit_SD_BF_Wx), depth_avg_UF_Wx = coalesce(depth_avg_UF_Wx, pit_SD_UF_Wx),
+         depth_avg_UF_N = coalesce(depth_avg_UF_N, pit_SD_UF_N), across(7:11, ~ na.approx(.x, rule = 2))) %>% 
+  select(-c(12:16))
+
+daily_density <- daily_wide %>% 
+  select(c(1, 7:11)) %>%
+  pivot_longer(cols = starts_with("bulk_density_"), names_prefix = "bulk_density_", names_to = "site", values_to = "density")
+  
+daily_depth <- daily_wide %>% 
+  select(c(1:6)) %>%
+  pivot_longer(cols = starts_with("depth_avg_"), names_prefix = "depth_avg_", names_to = "site", values_to = "depth")
+
+daily_long <- merge(daily_density, daily_depth, all = TRUE) %>% 
+  mutate(SWE = density*(depth/100))
+```
+
+```{r}
+# AWS depth
+load("C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/all_hr_AWS")
+
+daily_sonic_sd <- all_hr %>% 
+  select(c(1,2,10)) %>% 
+  mutate(date = date(TIMESTAMP)) %>% 
+  group_by(date, site) %>% 
+  summarise(depth = mean(DBTCDT_Avg, na.rm = TRUE)) %>% 
+  pivot_wider(names_from = site, values_from = depth)
+
+daily_sonic_density <- daily_wide %>% 
+  select(c(1,9,11))
+
+daily_sonic <- merge(daily_sonic_sd, daily_sonic_density, all = TRUE) %>% 
+  mutate(BFWx_sonic = bf*bulk_density_BF_Wx, UFWx_sonic = uf*bulk_density_UF_Wx) %>% 
+  select(c(1, 6:7)) %>% 
+  pivot_longer(cols = ends_with("_sonic"), names_to = "site", values_to = "SWE")
+
+daily_all <- bind_rows(daily_long, daily_sonic) %>% 
+  arrange(date)
+```
+
+```{r}
+# Joe Wright SNOTEL SWE
+JW_snotel <- snotel_download(site_id = 551, internal = TRUE) %>% 
+  mutate(date = ymd(date), site = "JW") %>% 
+  filter(date >= "2021-10-15")
+
+JW_SWE <- JW_snotel %>% 
+  select(c(12, 19, 13)) %>% 
+  rename(SWE = snow_water_equivalent)
+
+# add JW to the data frame
+daily_all <- daily_all %>% 
+  bind_rows(JW_SWE) %>% 
+  arrange(date)
+```
+
+```{r}
+all_cam <- all_cam %>% 
+  rename(depth = depth_avg) %>% 
+  mutate(depth = depth/100)
+
+auto_depth <- merge(daily_sonic_sd, all_cam, all = TRUE)
+
+sonic_depth <- ggplot(auto_depth) + 
+  geom_line(aes(x = date, y = depth, color = site))
+
+ggplotly(sonic_depth) %>% layout(hovermode = "x unified")
+
+SWE_Daily <- ggplot(daily_all) + 
+  geom_line(aes(x = date, y = SWE, color = site))
+
+ggplotly(SWE_Daily) %>% layout(hovermode = "x unified")
+```
+
+```{r}
+# Snow Depth increases
+cam_newsnow <- all_cam %>% 
+  select(c(7, 5, 6)) %>% 
+  arrange(date) %>% 
+  group_by(site) %>% 
+  mutate(accum = ifelse(depth > lag(depth), depth - lag(depth), NA))
+
+cam_accum <- ggplot(cam_newsnow, aes(x = date, y = accum, fill = site)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~site, ncol = 1) + 
+  gg
+
+ggplotly(cam_accum) %>% layout(hovermode = "x unified")
+```
+
