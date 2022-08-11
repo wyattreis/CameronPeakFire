@@ -16,13 +16,14 @@ library(plotly)
 library(ggplot2)
 ```
 
-```{r importing data, echo=FALSE}
+```{r importing data, echo=FALSE, eval=FALSE}
 # Import data with simple header
 ## Unburned forest hourly data before 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
-one_hour_uf_pre0110 <- read.table('C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000_7_One_Hour_0110.dat', 
+one_hour_uf_pre0110 <- read.table('AWS/data/CR1000_7_One_Hour_0110.dat', 
   sep = ",", header = TRUE, skip = "1") %>%
   slice(., -(1:2)) %>%
-  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate(TIMESTAMP = as.POSIXct(TIMESTAMP, tz = "UTC"), 
+         TIMESTAMP = as.POSIXct(format(TIMESTAMP, tz = "us/mountain", orgin = 'GMT', usetz = TRUE))) %>%
   mutate_if(is.character,as.numeric) %>%
   mutate(site = 'uf') %>%
   filter(TIMESTAMP >= "2021-11-19 07:00:00")
@@ -30,11 +31,11 @@ one_hour_uf_pre0110 <- read.table('C:/Users/wreis/OneDrive - Colostate/MS Resear
 ## N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Unburned/Data_220110/
 
 ## Unburned forest hourly data since 1/10, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
-one_hour_uf_post0110 <- read.table(
-  'C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000_7_One_Hour_0613.dat',
+one_hour_uf_post0110 <- read.table('AWS/data/CR1000_7_One_Hour_0804.dat',
   sep = ",", header = TRUE, skip = "1") %>%
   slice(., -(1:2)) %>%
-  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate(TIMESTAMP = as.POSIXct(TIMESTAMP, tz = "UTC"), 
+         TIMESTAMP = as.POSIXct(format(TIMESTAMP, tz = "us/mountain", orgin = 'GMT', usetz = TRUE))) %>%
   mutate_if(is.character,as.numeric) %>%
   mutate(site = 'uf') 
 
@@ -44,19 +45,218 @@ one_hour_uf_post0110 <- read.table(
 one_hour_uf <- bind_rows(one_hour_uf_pre0110, one_hour_uf_post0110)
 
 ## Burned forest hourly data, convert to MST from UTC, filter to only include data since 11/19/2021 14:00:00
-one_hour_bf <- read.table(
-  "C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000XSeries - new_Hourly_0613.dat",
+one_hour_bf <- read.table("AWS/data/CR1000XSeries - new_Hourly_0804.dat",
   sep = ",", header = TRUE, skip = "1") %>%
   slice(., -(1:2)) %>%
-  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate(TIMESTAMP = as.POSIXct(TIMESTAMP, tz = "UTC"), 
+         TIMESTAMP = as.POSIXct(format(TIMESTAMP, tz = "us/mountain", orgin = 'GMT', usetz = TRUE))) %>%
   mutate_if(is.character,as.numeric) %>%
   mutate(site = 'bf')
+
+# Joe Wright Data import
+one_hour_jw <- read_csv("AWS/data/joewright_met_composite1.csv") %>%
+  mutate(datetime = parse_date_time(datetime,orders = c('%m/%d/%Y %H:%M','%Y-%m-%d %H:%M')), hour = hour(datetime),
+         date = date(datetime)) %>%
+  rename(TIMESTAMP = datetime, SWin_Avg = Rs_in_Wm2, SWout_Avg = Rs_out_Wm2, LWin_Avg = Rl_in_Wm2, LWout_Avg = Rl_out_Wm2,
+         SWnet_Avg = Rs_net_Wm2, LWnet_Avg = Rl_net_Wm2, SWalbedo_Avg = albedo, NR_Avg = Rn_Wm2, WS_ms_Avg = u_ms, WindDir = u_dir, 
+         AirTC_Avg = Ta_C, RH = RH_percent, VWC_5cm_Avg = VWC_5, VWC_20cm_Avg = VWC_20, VWC_50cm_Avg = VWC_50) %>%
+  group_by(date, hour) %>%
+  summarize(WS_ms_Avg = mean(WS_ms_Avg, na.rm = TRUE), WindDir = mean(WindDir, na.rm = TRUE), 
+            SWin_Avg = sum(SWin_Avg, na.rm = TRUE), SWout_Avg = sum(SWout_Avg, na.rm = TRUE),
+            LWin_Avg = sum(LWin_Avg, na.rm = TRUE), LWout_Avg = sum(LWout_Avg, na.rm = TRUE), 
+            SWnet_Avg = sum(SWnet_Avg, na.rm = TRUE), LWnet_Avg = sum(LWnet_Avg, na.rm = TRUE),
+            SWalbedo_Avg = mean(SWalbedo_Avg, na.rm = TRUE), NR_Avg = sum(NR_Avg, na.rm = TRUE),
+            AirTC_Avg = mean(AirTC_Avg, na.rm = TRUE), RH = mean(RH, na.rm = TRUE), 
+            VWC_5cm_Avg = mean(VWC_5cm_Avg, na.rm = TRUE), VWC_20cm_Avg = mean(VWC_20cm_Avg, na.rm = TRUE),
+            VWC_50cm_Avg = mean(VWC_50cm_Avg, na.rm = TRUE)) %>% 
+    mutate(TIMESTAMP = as.POSIXct(strptime(paste(date , paste(hour, ":00:00", sep=""), sep=" "), "%Y-%m-%d %H:%M:%S")), .before = "date", site = 'jw', TIMESTAMP = TIMESTAMP - hours(7))
 
 ## N:/RStor/dmcgrath/Glacier/Cameron Peak Fire/2022 Field Season/Automated Data/Burned/Data_220406/
 
 # Combine all imported hourly data into one df
-all_hr <- bind_rows(one_hour_uf, one_hour_bf) %>%
-  filter(TIMESTAMP >= "2021-11-19 07:00:00")
+all_hr <- bind_rows(one_hour_uf, one_hour_bf, one_hour_jw) %>%
+  filter(TIMESTAMP >= "2021-11-19 14:00:00") %>%
+  relocate(site, .after = TIMESTAMP)
+
+save(all_hr, file = "all_hr_AWS")
+```
+
+```{r}
+load("C:/Users/wyatt/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/all_hr_AWS")
+```
+
+```{r, eval=FALSE}
+#import 15-minute data
+fifteen_minute_uf_0804 <- read.table('C:/Users/wyatt/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/AWS/data/CR1000_7_Fifteen_Minute_0804.dat', 
+  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = ymd_hms(TIMESTAMP), TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'uf') 
+
+
+fifteen_minute_bf_0804 <- read.table('AWS/data/CR1000XSeries - new_Fifteen_Minute_0804.dat', 
+  sep = ",", header = TRUE, skip = "1") %>%
+  slice(., -(1:2)) %>%
+  mutate(TIMESTAMP = as.POSIXct(TIMESTAMP, tz = "UTC"))# %>%  #, TIMESTAMP = TIMESTAMP - hours(7)) %>%
+  mutate_if(is.character,as.numeric) %>%
+  mutate(site = 'bf')
+  
+# create soilVUE DF
+bf_0804_soil <- fifteen_minute_bf_0804 %>% 
+  mutate(TIMESTAMP_LOCAL = as.POSIXct(format(TIMESTAMP, tz = "us/mountain", orgin = 'GMT', usetz = TRUE)),
+         .after = "TIMESTAMP")%>% 
+  filter(TIMESTAMP_LOCAL >= "2022-08-04 00:00:00") %>% 
+  select(-c(3:30))
+
+write.csv(bf_0804_soil, file = "C:/Users/wreis/OneDrive - Colostate/MS Research/Meetings/08092022/BF soilVUE/bf_0804_soil.csv")
+
+bf_0804_soil_VWC <- bf_0804_soil %>% 
+  select(c(1,2, starts_with("VWC"))) %>% 
+  pivot_longer(., cols = c(starts_with("VWC")), names_to = "depth", names_prefix = "VWC_", 
+               values_to = "VWC", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))
+
+bf_0804_soil_Ka <- bf_0804_soil %>% 
+  select(c(1,2, starts_with("Ka"))) %>% 
+  pivot_longer(., cols = c(starts_with("Ka")), names_to = "depth", names_prefix = "Ka_",
+               values_to = "Ka", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))
+
+bf_0804_soil_T <- bf_0804_soil %>% 
+  select(c(1,2, starts_with("T_"))) %>% 
+  pivot_longer(., cols = starts_with("T_"), names_to = "depth", names_prefix = "T_",
+               values_to = "T", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))
+
+bf_0804_soil_BulkEC <- bf_0804_soil %>% 
+  select(c(1,2, starts_with("BulkEC"))) %>% 
+  pivot_longer(., cols = starts_with("BulkEC"), names_to = "depth", names_prefix = "BulkEC_",
+               values_to = "BulkEC", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))
+
+soil_data <- bf_0804_soil_VWC %>% 
+  full_join(bf_0804_soil_Ka)%>% 
+  full_join(bf_0804_soil_T)%>% 
+  full_join(bf_0804_soil_BulkEC)
+
+start_times <- which(soil_data$TIMESTAMP_LOCAL %in% as.POSIXct(c("2022-08-04 10:30:00", 
+                                                                 "2022-08-04 12:15:00", 
+                                                                 "2022-08-04 13:30:00")))
+
+lims <- as.POSIXct(strptime(c("2022-08-04 09:00:00", "2022-08-04 15:00:00"), format = "%Y-%m-%d %H:%M:%S"))
+
+# plot data
+Ka_plot <- ggplot(soil_data, aes(x = TIMESTAMP_LOCAL, y = Ka, color = depth)) +
+  geom_line() +
+  geom_vline(xintercept = as.numeric(soil_data$TIMESTAMP_LOCAL[start_times]), size = 1,linetype="dotdash", color = "red") +
+  labs(title = "Ka Timeseries", x = "Date") +
+  scale_color_discrete(limits = c("5", "10", "20", "30", "40", "50")) + 
+  scale_x_datetime(limits = lims, date_labels = "%H:%M", date_breaks = "1 hour")
+
+Ka_plot
+
+BulkEC_plot <- ggplot(soil_data, aes(x = TIMESTAMP_LOCAL, y = BulkEC, color = depth)) +
+  geom_line() +
+  geom_vline(xintercept = as.numeric(soil_data$TIMESTAMP_LOCAL[start_times]), size = 1,linetype="dotdash", color = "red") +
+  labs(title = "BulkEC Timeseries", x = "Date") +
+  scale_color_discrete(limits = c("5", "10", "20", "30", "40", "50")) + 
+  scale_x_datetime(limits = lims, date_labels = "%H:%M", date_breaks = "1 hour")
+
+BulkEC_plot
+
+VWC_plot <- ggplot(soil_data, aes(x = TIMESTAMP_LOCAL, y = VWC, color = depth)) +
+  geom_line() +
+  geom_vline(xintercept = as.numeric(soil_data$TIMESTAMP_LOCAL[start_times]), size = 1,linetype="dotdash", color = "red") +
+  labs(title = "VWC Timeseries", x = "Date") +
+  scale_color_discrete(limits = c("5", "10", "20", "30", "40", "50")) + 
+  scale_x_datetime(limits = lims, date_labels = "%H:%M", date_breaks = "1 hour")
+
+VWC_plot
+
+T_plot <- ggplot(soil_data, aes(x = TIMESTAMP_LOCAL, y = T, color = depth)) +
+  geom_line() +
+  geom_vline(xintercept = as.numeric(soil_data$TIMESTAMP_LOCAL[start_times]), size = 1,linetype="dotdash", color = "red") +
+  labs(title = "T Timeseries", x = "Date") +
+  scale_color_discrete(limits = c("5", "10", "20", "30", "40", "50")) + 
+  scale_x_datetime(limits = lims, date_labels = "%H:%M", date_breaks = "1 hour")
+
+T_plot
+```
+
+```{r}
+#BF 20 and 30 cm
+#UF 50 and 60 cm
+
+#SoilVUE Ka Data
+all_soil_Ka <- all_hr %>%
+  subset(site != "jw") %>% 
+  select(c(TIMESTAMP, site,
+             Ka_20cm_Avg, Ka_30cm_Avg, Ka_50cm_Avg, Ka_60cm_Avg)) %>%
+  filter(TIMESTAMP > ymd_hms("2021-11-01 00:00:00")) %>%
+  mutate(date = as_date(TIMESTAMP))
+
+#Daily data
+all_soil_Ka_daily <- all_soil_Ka %>%
+  select(-TIMESTAMP) %>%
+  group_by(date, site) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+all_soil_Ka_daily_long <- all_soil_Ka_daily %>% 
+  pivot_longer(., cols = c(starts_with("Ka")), names_to = "depth", names_prefix = "Ka_",
+               values_to = "Ka", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))%>% 
+  na.omit() %>%
+  filter((site == "bf" & (depth == "20" | depth == "30")) |
+           (site == "uf" & (depth == "50" | depth == "60")))
+
+Ka_plot <- ggplot(all_soil_Ka_daily_long, aes(x = date, y = Ka, color = site, linetype= depth)) +
+  geom_line() +
+  labs(title = "Ka Timeseries", x = "Date", color = "(Site,", linetype = "Depth)")
+
+Ka_plot
+
+ggplotly(Ka_plot)
+```
+
+```{r}
+#SoilVUE T Data
+all_soil_T <- all_hr %>%
+  subset(site != "jw") %>% 
+  select(c(TIMESTAMP, site,
+             T_5cm_Avg, T_10cm_Avg, T_20cm_Avg, T_30cm_Avg, T_40cm_Avg, T_50cm_Avg, T_60cm_Avg, 
+             T_75cm_Avg, T_100cm_Avg)) %>%
+  filter(TIMESTAMP > ymd_hms("2021-11-01 00:00:00")) %>%
+  mutate(date = as_date(TIMESTAMP))
+
+all_soil_T_hr_long <- all_soil_T %>% 
+  select(-date) %>%
+  pivot_longer(., cols = c(starts_with("T_")), names_to = "depth", names_prefix = "T_",
+               values_to = "T", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg")) %>% 
+  na.omit()
+
+#Daily data
+all_soil_T_daily <- all_soil_T %>%
+  select(-TIMESTAMP) %>%
+  group_by(date, site) %>%
+  summarise(across(everything(), list(mean = mean), na.rm = TRUE))
+
+all_soil_T_daily_long <- all_soil_T_daily %>% 
+  pivot_longer(., cols = c(starts_with("T")), names_to = "depth", names_prefix = "T_",
+               values_to = "T", values_transform = as.numeric) %>%
+  mutate(depth = str_remove(depth, "cm_Avg"))
+
+T_plot <- ggplot(all_soil_T_hr_long, aes(x = TIMESTAMP, y = T, color = site, linetype= depth)) +
+  geom_line() +
+  labs(title = "T Timeseries", x = "Date")
+
+T_plot
+
+ggplotly(T_plot) %>% layout(hovermode = "x unified")
+
+#BF 20 and 30 cm
+#UF 50 and 60 cm
 ```
 
 ```{r echo=FALSE}
@@ -65,7 +265,7 @@ sb = 5.67E-8
 
 all_rad <- all_hr %>%
     select(c(TIMESTAMP, site, SWin_Avg, SWout_Avg, SWnet_Avg,
-           LWin_Avg, LWout_Avg, LWnet_Avg,
+           LWin_Avg, LWout_Avg, LWnet_Avg, NR_Avg,
            SWalbedo_Avg, AirTC_Avg)) %>%
   filter(TIMESTAMP > ymd_hms("2021-11-01 00:00:00")) %>%
   mutate(lw_out_temp = sb*(AirTC_Avg+273.15)^4, diff = LWout_Avg - lw_out_temp, net_Avg = LWnet_Avg + SWnet_Avg) %>%
@@ -84,19 +284,35 @@ all_rad_daily <- all_rad %>%
   mutate(SWin_diff = lag(SWin_Avg_sum) - SWin_Avg_sum, SWin_ratio = SWin_Avg_sum/lag(SWin_Avg_sum),
          SWalbedo_ratio = SWalbedo_Avg_median/lag(SWalbedo_Avg_median)) %>%
   group_by(site) %>%
-  mutate(cumSWin = cumsum(SWin_Avg_sum))
+  mutate(cumSWnet = cumsum(SWnet_Avg_sum), cumLWnet = cumsum(LWnet_Avg_sum), cumNR = cumsum(NR_Avg_sum))%>%
+  mutate(cumSWnet_med = cumsum(SWnet_Avg_median), cumLWnet_med = cumsum(LWnet_Avg_median), cumNR_med = cumsum(NR_Avg_median))
 
 rad_day_filtered <- all_rad_daily %>%
   mutate(SWin_ratio = ifelse(date <= "2021-12-03" | date >= "2021-12-28" & date <= "2022-03-21" | date >= "2022-04-07", SWin_ratio, NA))
 ```
 
-```{r shortwave, fig.width=12,fig.height=7}
+```{r shortwave, eval = FALSE, fig.width=12,fig.height=7}
+
+netRad <- ggplot(all_rad_daily) + 
+  geom_line(aes(x = date, y = cumNR, color = site, linetype = "net")) +
+  geom_line(aes(x = date, y = cumSWnet, color = site, linetype = "SWnet"))+
+  geom_line(aes(x = date, y = cumLWnet, color = site, linetype = "LWnet"))
+
+ggplotly(netRad)%>% layout(hovermode = "x unified")
+
+netRad_med <- ggplot(all_rad_daily) + 
+  geom_line(aes(x = date, y = cumNR_med, color = site, linetype = "net")) +
+  geom_line(aes(x = date, y = cumSWnet_med, color = site, linetype = "SWnet"))+
+  geom_line(aes(x = date, y = cumLWnet_med, color = site, linetype = "LWnet"))
+
+ggplotly(netRad_med)%>% layout(hovermode = "x unified")
+
 # Shortwave
 sw_daily<- ggplot(all_rad_daily) +
   geom_line(aes(x = date, y= SWin_Avg_sum, color = site, linetype = "SWin")) +
   geom_line(aes(x = date, y= SWout_Avg_sum, color = site, linetype = "SWout")) +
   ggtitle("SW daily sum") +
-  scale_color_manual(values = c("black", "green"))
+  scale_color_manual(values = c("black", "green", "blue"))
 ggplotly(sw_daily)
 
 swin_daily_cum<- ggplot(all_rad_daily) +
@@ -108,29 +324,29 @@ ggplotly(swin_daily_cum)
 swin_daily_ratio_filtered <- ggplot(rad_day_filtered) +
   geom_line(aes(x = date, y= SWin_ratio, color = site)) +
   ggtitle("SWin daily ratio (UF/BF)") +
-  scale_color_manual(values = c("black", "green"))
+  scale_color_manual(values = c("black", "green", "blue"))
 ggplotly(swin_daily_ratio_filtered)
 
 swin_ratio_boxplot<- ggplot(rad_day_filtered, aes(x = site, y= SWin_ratio, color = site)) +
   geom_boxplot() +
   ggtitle("SWin_ratio (UF/BF) daily boxplot - filtered") +
-  scale_color_manual(values = c("green"))
+  scale_color_manual(values = c("green", "blue"))
 ggplotly(swin_ratio_boxplot)
 
 swin_daily_boxplot<- ggplot(all_rad_daily, aes(x = site, y= SWin_Avg_sum, color = site)) +
   geom_boxplot() +
   ggtitle("SWin daily boxplot") +
-  scale_color_manual(values = c("black", "green"))
+  scale_color_manual(values = c("black", "green", "blue"))
 ggplotly(swin_daily_boxplot)
 
 ```
 
-```{r albedo, fig.width=12,fig.height=7}
+```{r albedo, eval = FALSE, fig.width=12,fig.height=7}
 # Albedo
 albedo_daily<- ggplot(all_rad_daily, aes(x = date, y= SWalbedo_Avg_median, color = site)) +
   geom_line() +
   ggtitle("Albedo daily median (between 1000 and 1400)")+
-  scale_color_manual(values = c("black", "green"))
+  scale_color_manual(values = c("black", "green", "blue"))
 ggplotly(albedo_daily) %>% layout(hovermode = "x unified")
 
 albedo_daily_ratio<- ggplot(all_rad_daily, aes(x = date, y= SWalbedo_ratio, color = site)) +
@@ -152,7 +368,7 @@ albedo_ratio_boxplot<- ggplot(all_rad_daily, aes(x = site, y= SWalbedo_ratio, co
 ggplotly(albedo_ratio_boxplot)
 ```
 
-```{r longwave, fig.width=12,fig.height=7}
+```{r longwave, eval = FALSE, fig.width=12,fig.height=7}
 # longwave
 sb = 5.67E-8
 
@@ -187,5 +403,26 @@ perm <- ggplot(all_perm) +
   geom_line(aes(x = TIMESTAMP, y = Ka, color = site, linetype = depth))
 
 ggplotly(perm)
+```
+
+```{r}
+# Wind speed
+wind_daily <- all_hr %>% 
+  select(c(1,2,11,12)) %>%
+  mutate(date = date(TIMESTAMP)) %>% 
+  group_by(site, date) %>% 
+  summarise(wind_mean = mean(WS_ms_Avg, na.rm = TRUE))
+
+wind_speed <- ggplot(wind_daily, aes(x = date, y = wind_mean, color = site)) +
+  geom_line()
+
+ggplotly(wind_speed)
+ggsave("wind_speed.png")
+
+wind_speed_box <- ggplot(all_hr, aes(x = site, y= WS_ms_Avg, color = site)) +
+  geom_boxplot()
+
+ggplotly(wind_speed_box)
+ggsave("wind_speed_box.png")
 ```
 
