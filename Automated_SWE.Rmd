@@ -76,7 +76,7 @@ spice <- read.csv("AWS/SPICE/BACKUP.CSV") %>%
   group_by(date) %>% 
   summarize(sd_sonic = median(depth, na.rm = TRUE)*100) %>%
   filter(date >= "2021-10-15") %>% 
-  mutate(rolling_sd = rollmean(sd_sonic, 3, fill = NA), site = "UF_c")
+  mutate(rolling_sd = rollmean(sd_sonic, 3, fill = NA), site = "UF_UC")
 ```
 
 ```{r test plot}
@@ -96,7 +96,6 @@ spice_sd <- ggplot(spice) +
 ggplotly(spice_sd) %>% layout(hovermode = "x unified")
 ```
 
-
 ```{r mutate data}
 # Mutate data to include SD, Density, and/or SWE 
 # Snow Pit Density 
@@ -105,7 +104,7 @@ pit_density <- all_pits %>%
   group_by(date, site) %>%
   summarise(bulk_density = weighted.mean(density_avg, weight, na.rm = TRUE), pit_SD = max(heightAG, na.rm = TRUE))
 
-# Daily Wx sonic snow depth data
+# Daily Wx sonic snow depth data, merge with correct density values
 daily_sonic <- all_hr %>% 
   select(c(1,2,10)) %>% 
   mutate(date = date(TIMESTAMP), site = ifelse(site == "bf", "BF_Wx", "UF_Wx")) %>% 
@@ -115,6 +114,15 @@ daily_sonic <- all_hr %>%
   filter(site == "UF_Wx" | site == "BF_Wx") %>% 
   select(-c(pit_SD)) %>% 
   mutate(site = ifelse(site == "BF_Wx", "BF_Wx_sonic", "UF_Wx_sonic"))
+
+# Merge daily SPICE data with correct density values
+spice_density <- merge(spice, pit_density, all = TRUE) %>%
+  mutate(site = replace(site, site == "UF_UC", "UF_Wx")) %>% 
+  filter(site == "UF_Wx") %>% 
+  group_by(date, site) %>% 
+  summarise_all(sum, na.rm = TRUE) %>% 
+  select(-c(pit_SD)) %>% 
+  mutate(site = "UF_UC", bulk_density = replace(bulk_density, bulk_density == 0, NA))
 
 # Daily Camera data
 daily_cam <- all_cam %>% 
@@ -138,13 +146,13 @@ ggplotly(density) %>% layout(hovermode = "x unified")
 
 ```{r merge data}
 # Merge all automated data with snow pit depth and density
-AWS_daily <- list(daily_cam, pit_density, daily_sonic, JW_SWE, spice) %>% 
+AWS_daily <- list(daily_cam, pit_density, daily_sonic, JW_SWE, spice_density) %>% 
   reduce(full_join, by = c("date", "site")) %>% 
   mutate(sd = coalesce(depth_avg, pit_SD, depth, rolling_sd),
          sd = ifelse((site == "UF_Wx_sonic" & date >= "2022-06-14") |
                        (site == "BF_Wx_sonic" & date >= "2022-06-03") |
                        (site == "BF_Wx" & date == "2022-06-03"), 0, sd),
-         bulk_density = coalesce(bulk_density.x, bulk_density.y)) %>% #coalesce to fill gaps in camera and sonic time series with pit 
+         bulk_density = coalesce(bulk_density.x, bulk_density.y, bulk_density)) %>% #coalesce to fill gaps in camera and sonic time series with pit 
   group_by(site) %>% 
   mutate(density = na.approx(bulk_density, rule =2, na.rm = FALSE), .after = sd, SWE = ifelse(is.na(SWE), density*sd/100, SWE),
          burn = ifelse(startsWith(site, "BF_"), "yes", "no")) %>% 
