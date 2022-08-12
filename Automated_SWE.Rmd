@@ -1,0 +1,218 @@
+---
+title: "Camera_SD"
+author: "Wyatt Reis"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(zoo)
+library(snotelr)
+```
+
+```{r Import Cameras, eval=FALSE, echo=FALSE}
+# Import camera data
+BFN_cam <-read.csv('C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/Camera_SD/data/BFN_cam_depth.csv') %>%
+  mutate(site = "BF_N") %>% 
+  na.omit()
+
+BFS_cam <-read.csv('C:/Users/wreis/OneDrive - Colostate/MS Research/R_Git/CameronPeakFire/Camera_SD/data/BFS_cam_depth.csv') %>%
+  mutate(site = "BF_S")%>% 
+  na.omit()
+
+BFWx_cam <- read.csv('Camera_SD/data/BFWx_cam_depth.csv') %>%
+  mutate(site = "BF_Wx", depth2 = NA, depth3 = NA)
+
+UFN_cam <- read.csv('Camera_SD/data/UFN_cam_depth.csv') %>%
+  mutate(site = "UF_N")
+
+UFWx_cam <- read.csv('Camera_SD/data/UFWx_cam_depth.csv') %>%
+  mutate(site = "UF_Wx", depth2 = NA, depth3 = NA)
+
+all_cam <- bind_rows(BFN_cam, BFS_cam, BFWx_cam, UFN_cam, UFWx_cam) %>%
+  mutate(Datetime = mdy_hm(Datetime), depth_avg = rowMeans(.[,2:4], na.rm = TRUE), date = date(Datetime))
+
+save(all_cam, file = "all_cam")
+```
+
+```{r Import JW data, eval=FALSE, echo=FALSE}
+# Import Joe Wright SNOTEL SWE
+JW_snotel <- snotel_download(site_id = 551, internal = TRUE) %>%
+  mutate(date = ymd(date), site = "JW") %>%
+  filter(date >= "2021-10-15" & date <= "2022-06-15")
+
+save(JW_snotel, file = "JW_snotel")
+```
+
+```{r load data}
+# Load all snow depth and density data
+# Load snow pit data
+load("all_pits")
+
+# Load Camera Data
+load("all_cam")
+
+# AWS depth
+load("all_hr_AWS")
+
+# JW SNOTEL Date
+load("JW_snotel")
+
+# Import SPICE Data
+spice <- read.csv("AWS/SPICE/BACKUP.CSV") %>% 
+  select(c(2,3)) %>% 
+  mutate(date = sub("T.*", "", Timestamp), time = str_remove(sub(".*T", "", Timestamp), "Z"), 
+         Timestamp= format(as.POSIXct(paste(date, time), tz = "MST"), "%Y-%m-%d %H:%M:%S"), 
+         date = date(Timestamp) ,site = "UF_uc",
+         depth = Height..m. - 2.47) %>% 
+  filter(depth <= 2.5 & depth >= 0) %>%
+  mutate(depth = replace(depth, depth <= 0.01, 0)) %>% 
+  group_by(date) %>% 
+  summarize(sd_sonic = median(depth, na.rm = TRUE)*100) %>%
+  filter(date >= "2021-10-15") %>% 
+  mutate(rolling_sd = rollmean(sd_sonic, 3, fill = NA), site = "UF_c")
+```
+
+```{r test plot}
+#Plot camera snow depths
+SD_Daily <- ggplot(all_cam) + 
+  geom_line(aes(x = date, y = depth_avg, color = site ))+
+  labs(title = "Camera Snow Depth", x = "Date", y = "Snow Depth (cm)") 
+
+ggplotly(SD_Daily) %>% layout(hovermode = "x unified")
+
+#Plot spice snow depths
+spice_sd <- ggplot(spice) + 
+  geom_line(aes(x = date, y = sd_sonic, color = "SD"))+
+  geom_line(aes(x = date, y = rolling_sd, color = "3 day rolling SD"))+
+  labs(title = "Spice Snow Depth", x = "Date", y = "Snow Depth (cm)") 
+
+ggplotly(spice_sd) %>% layout(hovermode = "x unified")
+```
+
+
+```{r mutate data}
+# Mutate data to include SD, Density, and/or SWE 
+# Snow Pit Density 
+pit_density <- all_pits %>%
+  mutate(density_avg = rowMeans(.[,5:7], na.rm = TRUE), weight = densityTop - densityBot) %>%
+  group_by(date, site) %>%
+  summarise(bulk_density = weighted.mean(density_avg, weight, na.rm = TRUE), pit_SD = max(heightAG, na.rm = TRUE))
+
+# Daily Wx sonic snow depth data
+daily_sonic <- all_hr %>% 
+  select(c(1,2,10)) %>% 
+  mutate(date = date(TIMESTAMP), site = ifelse(site == "bf", "BF_Wx", "UF_Wx")) %>% 
+  group_by(date, site) %>% 
+  summarise(depth = mean(DBTCDT_Avg, na.rm = TRUE)*100) %>% 
+  merge(., pit_density, all = TRUE) %>% 
+  filter(site == "UF_Wx" | site == "BF_Wx") %>% 
+  select(-c(pit_SD)) %>% 
+  mutate(site = ifelse(site == "BF_Wx", "BF_Wx_sonic", "UF_Wx_sonic"))
+
+# Daily Camera data
+daily_cam <- all_cam %>% 
+  select(-c(1:4)) %>% 
+  relocate("date", .before = "site")
+
+# Daily Joe Wright SWE Data
+JW_SWE <- JW_snotel %>% 
+  select(c(12, 19, 13)) %>% 
+  rename(SWE = snow_water_equivalent)
+```
+
+```{r}
+#Plot Snow pit density
+density <- ggplot(pit_density) + 
+  geom_line(aes(x = date, y = bulk_density, color = site ))+
+  labs(title = "Snow Pit Density", x = "Date", y = "Density (kg/m^3)") 
+
+ggplotly(density) %>% layout(hovermode = "x unified")
+```
+
+```{r merge data}
+# Merge all automated data with snow pit depth and density
+AWS_daily <- list(daily_cam, pit_density, daily_sonic, JW_SWE, spice) %>% 
+  reduce(full_join, by = c("date", "site")) %>% 
+  mutate(sd = coalesce(depth_avg, pit_SD, depth, rolling_sd),
+         sd = ifelse((site == "UF_Wx_sonic" & date >= "2022-06-14") |
+                       (site == "BF_Wx_sonic" & date >= "2022-06-03") |
+                       (site == "BF_Wx" & date == "2022-06-03"), 0, sd),
+         bulk_density = coalesce(bulk_density.x, bulk_density.y)) %>% #coalesce to fill gaps in camera and sonic time series with pit 
+  group_by(site) %>% 
+  mutate(density = na.approx(bulk_density, rule =2, na.rm = FALSE), .after = sd, SWE = ifelse(is.na(SWE), density*sd/100, SWE),
+         burn = ifelse(startsWith(site, "BF_"), "yes", "no")) %>% 
+  # extrapolate of density calculate SWE
+  select("date", "site", "SWE", "sd", "density", "burn") %>% 
+  relocate("burn", .after = "site") %>% 
+  filter(date < "2022-06-15")
+```
+
+```{r}
+# Plot the  timeseries data
+#SD
+SD_Daily <- ggplot(AWS_daily) + 
+  geom_line(aes(x = date, y = sd, color = site )) +
+  labs(title = "Automated SD", x = "Date", y = "Snow Depth (cm)")
+
+ggplotly(SD_Daily) %>% layout(hovermode = "x unified")
+
+
+#SWE
+SWE_Daily <- ggplot(AWS_daily) + 
+  geom_line(aes(x = date, y = SWE, color = site )) +
+  labs(title = "Automated SWE", x = "Date", y = "SWE (mm)")
+
+ggplotly(SWE_Daily) %>% layout(hovermode = "x unified")
+
+
+#SWE
+Density_Daily <- ggplot(AWS_daily) + 
+  geom_line(aes(x = date, y = density, color = site )) +
+  labs(title = "Density Timelapse", x = "Date", y = "SWE (mm)")
+
+ggplotly(Density_Daily) %>% layout(hovermode = "x unified")
+```
+
+```{r}
+AWS_daily_summary <- AWS_daily %>% 
+  group_by(site) %>% 
+  summarize(max = max(SWE, na.rm = T))
+```
+
+```{r}
+# SWE increases
+snow_change <- AWS_daily %>% 
+  arrange(date) %>% 
+  group_by(site) %>% 
+  mutate(accum = ifelse(SWE > lag(SWE), SWE - lag(SWE), NA),
+         ablat = ifelse(SWE < lag(SWE), lag(SWE) - SWE, NA))
+# accumulation
+cam_accum <- ggplot(snow_change, aes(x = date, y = accum, fill = site)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~site, ncol = 2) + 
+  labs(title = "New Snow Accumulation", x = "Date", y = "Accumulation (mm)") +
+  theme(legend.position = "none")
+
+ggplotly(cam_accum) %>% layout(hovermode = "x unified")
+#ggsave("newsnowaccum.png")
+
+# ablation
+cam_ablat <- ggplot(snow_change, aes(x = date, y = ablat, fill = site)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~site, ncol = 2) + 
+  labs(title = "Snow Ablation", x = "Date", y = "Ablation (mm)") + 
+  theme(legend.position = "none")
+
+ggplotly(cam_ablat) %>% layout(hovermode = "x unified")
+#ggsave("snowablation.png")
+
+
+```
+
